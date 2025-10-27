@@ -17,7 +17,10 @@ class User(BaseModel):
 def get_users():
     return {"name":"John Doe", "email":"abc@gmail.com","sal":"1000"}
 
-username="admin"
-password="password123"
+
+
+
+ 
+
 
 

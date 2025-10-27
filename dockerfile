@@ -1,19 +1,19 @@
-# Use a small nginx image
-FROM nginx:alpine
+# Use a small official Python image
+FROM python:3.11-slim
 
-# Set the working directory to Nginx's web root
-WORKDIR /usr/share/nginx/html
+# Set working directory
+WORKDIR /app
 
-# Metadata (optional)
-LABEL maintainer="you@example.com"
-LABEL description="Simple one-page static site served with nginx"
 
-# Remove default nginx content and copy your site in
-RUN rm -rf /usr/share/nginx/html/*
-COPY index.html .
+# Copy requirements and installdoc
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose the standard HTTP port
-EXPOSE 80
+# Copy application code
+COPY . .
 
-# Start nginx in the foreground
-CMD ["nginx", "-g", "daemon off;"]
+# Expose port (change if you plan a different port)
+
+
+# Run the app with Uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8007"]
