@@ -51,13 +51,14 @@ jobs:
       - name: Build and push image (docker CLI)
         env:
           IMAGE_FULL: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
+          echo "PWD before build: $(pwd)"
+          echo "Listing files in current dir:"
+          ls -la
           echo "Building image: $IMAGE_FULL"
-          echo "---- docker build output ----"
-          # Use docker CLI to build from repo root (explicit Dockerfile name)
           docker build -f Dockerfile -t "$IMAGE_FULL" .
-          echo "---- docker push output ----"
           docker push "$IMAGE_FULL"
           echo "Build & push finished: $IMAGE_FULL"
 
