@@ -26,30 +26,9 @@ jobs:
       - name: Show repo root (debug)
         run: |
           echo "Working directory: $(pwd)"
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
           echo "Listing repo root files:"
           ls -la
-
-      - name: Show Dockerfile path (debug)
-        run: |
-          # Check for exact filename "Dockerfile" at repo root (case-sensitive)
-          if [ -f Dockerfile ]; then
-            echo "Dockerfile found at repo root"
-          else
-            echo "::error ::Dockerfile NOT found at repo root. Listing common alternatives..."
-            echo "Contents of app/:"
-            ls -la app || true
-            echo "Contents of backend/:"
-            ls -la backend || true
-            echo "Contents of docker/:"
-            ls -la docker || true
-            exit 1
-          fi
-
-      - name: Set up QEMU (for buildx)
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
 
       - name: Quick secret sanity check
         env:
@@ -69,14 +48,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image
-        id: build
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Build and push image (docker CLI)
+        env:
+          IMAGE_FULL: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "Building image: $IMAGE_FULL"
+          echo "---- docker build output ----"
+          # Use docker CLI to build from repo root (explicit Dockerfile name)
+          docker build -f Dockerfile -t "$IMAGE_FULL" .
+          echo "---- docker push output ----"
+          docker push "$IMAGE_FULL"
+          echo "Build & push finished: $IMAGE_FULL"
 
       - name: Install yq
         run: |
