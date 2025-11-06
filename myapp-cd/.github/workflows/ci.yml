@@ -1,4 +1,4 @@
-name: CI Build & Update Manifests (build from myapp-cd)
+name: CI Build & Update Manifests (final robust)
 
 on:
   push:
@@ -29,18 +29,18 @@ jobs:
           echo "PWD: $(pwd)"
           echo "---- top-level files ----"
           ls -la
-          echo "---- show .github/workflows ----"
-          ls -la .github/workflows || true
           echo "---- show myapp-cd (project) ----"
           ls -la myapp-cd || echo "myapp-cd not present"
 
-      - name: Show Dockerfile inside myapp-cd (debug)
+      - name: Show myapp-cd Dockerfile (debug)
         run: |
           if [ -f myapp-cd/Dockerfile ]; then
-            echo "Dockerfile present at myapp-cd/Dockerfile"
+            echo "FOUND: myapp-cd/Dockerfile"
             stat myapp-cd/Dockerfile || true
-            echo "---- Dockerfile content (first 200 lines) ----"
-            sed -n '1,200p' myapp-cd/Dockerfile || true
+            echo "---- Dockerfile head ----"
+            sed -n '1,120p' myapp-cd/Dockerfile || true
+            echo "---- sha256 ----"
+            sha256sum myapp-cd/Dockerfile || true
           else
             echo "::error ::myapp-cd/Dockerfile NOT found"
             exit 1
@@ -55,8 +55,8 @@ jobs:
             echo "::error ::DOCKERHUB_USERNAME and/or DOCKERHUB_TOKEN missing"
             exit 2
           fi
-          echo "DockerHub username present (length): ${#DH_USER}"
-          echo "DockerHub token present (length): ${#DH_TOKEN}"
+          echo "DockerHub username present (len): ${#DH_USER}"
+          echo "DockerHub token present (len): ${#DH_TOKEN}"
 
       - name: Docker login (use token)
         uses: docker/login-action@v2
@@ -70,11 +70,13 @@ jobs:
           IMAGE_FULL: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
           set -euo pipefail
+
           echo "PWD before build: $(pwd)"
           echo "Listing myapp-cd folder:"
           ls -la myapp-cd || true
 
-          echo "Building image (explicit context myapp-cd): $IMAGE_FULL"
+          echo "Building image from myapp-cd: $IMAGE_FULL"
+          # Build explicitly from myapp-cd
           docker build -f myapp-cd/Dockerfile -t "$IMAGE_FULL" myapp-cd 2>&1 | sed -n '1,400p' || true
 
           echo
@@ -83,7 +85,6 @@ jobs:
             echo "Image found as exact name: $IMAGE_FULL"
             PUSH_TARGET="$IMAGE_FULL"
           else
-            # Fallback to short name (strip leading docker.io/ if present)
             SHORT="${IMAGE_FULL#docker.io/}"
             echo "Exact name not found; trying short name: $SHORT"
             if docker image inspect "$SHORT" >/dev/null 2>&1; then
@@ -102,8 +103,8 @@ jobs:
           if docker push "$PUSH_TARGET" 2>&1 | sed -n '1,200p'; then
             echo "Push succeeded for $PUSH_TARGET"
           else
-            echo "Push failed for $PUSH_TARGET, trying alternate form"
             ALT="${PUSH_TARGET#docker.io/}"
+            echo "Push failed for $PUSH_TARGET, trying alternate form: $ALT"
             if docker push "$ALT" 2>&1 | sed -n '1,200p'; then
               echo "Push succeeded for alternate $ALT"
             else
