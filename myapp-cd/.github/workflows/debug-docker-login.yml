@@ -1,48 +1,66 @@
-name: Debug Docker Login (explicit)
+name: CI Build & Update Manifests
 
 on:
-  workflow_dispatch:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
-  debug-login:
+  build-and-update:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Show context
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ github.sha }}
+
+      - name: Install yq
         run: |
-          echo "REPO=${GITHUB_REPOSITORY}"
-          echo "REF=${GITHUB_REF}"
-          echo "ACTOR=${GITHUB_ACTOR}"
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/bin/yq
 
-      - name: Show secrets presence (masked)
+      - name: Update kustomize image tags in overlays
         env:
-          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
-          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ github.sha }}
+          GIT_EMAIL: "github-actions[bot]@users.noreply.github.com"
+          GIT_NAME: "github-actions[bot]"
         run: |
-          echo "DH_USER present? -> ${DH_USER:+YES}${DH_USER:-NO}"
-          echo "DH_TOKEN present? -> ${DH_TOKEN:+YES}${DH_TOKEN:-NO}"
-          echo "Lengths: user=${#DH_USER}, token=${#DH_TOKEN}"
-          if [ -z "${DH_USER:-}" ] || [ -z "${DH_TOKEN:-}" ]; then
-            echo "ERROR: secrets missing or empty; exit."
-            exit 2
-          fi
+          git config user.email "$GIT_EMAIL"
+          git config user.name "$GIT_NAME"
 
-      - name: Try docker CLI login (explicit)
-        shell: bash
-        env:
-          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
-          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          echo "Attempting docker login with CLI..."
-          set -o pipefail
-          echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin 2>&1 | sed -n '1,200p' || echo "docker login returned non-zero exit code"
+          # Update dev
+          yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/dev/kustomization.yaml
+          # Update staging
+          yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/staging/kustomization.yaml
+          # Update prod
+          yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/prod/kustomization.yaml
 
-      - name: Docker version (sanity)
-        run: docker --version || true
-
-      - name: Done
-        run: echo "debug finished"
+          git add k8s/overlays/dev/kustomization.yaml k8s/overlays/staging/kustomization.yaml k8s/overlays/prod/kustomization.yaml
+          git commit -m "ci: bump image tag to $IMAGE" || echo "no changes to commit"
+          git push origin HEAD:main
