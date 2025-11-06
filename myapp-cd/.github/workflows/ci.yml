@@ -9,8 +9,9 @@ permissions:
   contents: write
 
 env:
-  IMAGE_NAME: myapp   # change only if your image repo name differs
+  IMAGE_NAME: myapp
   REGISTRY: docker.io
+  DOCKERHUB_USERNAME: poojavijayakumar   # using your username directly
 
 jobs:
   build-and-update:
@@ -23,21 +24,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: true  # allow pushing back with the runner's token
 
-      - name: Quick secrets sanity check
-        # this checks secrets are available to the runner; fails early if not
+      - name: Quick secret sanity check
         env:
-          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          echo "Checking required secrets..."
-          if [ -z "${DH_USER:-}" ] || [ -z "${DH_TOKEN:-}" ]; then
-            echo "ERROR: Required secrets DOCKERHUB_USERNAME and/or DOCKERHUB_TOKEN are missing or empty."
-            echo "Please add them at: Settings -> Secrets and variables -> Actions"
+          echo "Checking DockerHub token presence..."
+          if [ -z "${DH_TOKEN:-}" ]; then
+            echo "❌ ERROR: DOCKERHUB_TOKEN secret is missing or empty."
+            echo "➡️  Go to: GitHub → Repo → Settings → Secrets and variables → Actions → New secret"
+            echo "   Name: DOCKERHUB_TOKEN"
+            echo "   Value: <your DockerHub access token>"
             exit 2
           fi
-          echo "DOCKERHUB_USERNAME length: ${#DH_USER}"
-          echo "DOCKERHUB_TOKEN length: ${#DH_TOKEN}"
-          echo "Secrets appear present. Proceeding..."
+          echo "✅ DockerHub token detected. Proceeding..."
 
       - name: Set up QEMU (for buildx)
         uses: docker/setup-qemu-action@v2
@@ -48,7 +47,7 @@ jobs:
       - name: Login to DockerHub
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push image
@@ -58,7 +57,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Install yq
         run: |
@@ -69,7 +68,7 @@ jobs:
 
       - name: Update kustomize image tags in overlays
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           GIT_EMAIL: "github-actions[bot]@users.noreply.github.com"
           GIT_NAME: "github-actions[bot]"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -78,7 +77,7 @@ jobs:
           git config user.email "$GIT_EMAIL"
           git config user.name "$GIT_NAME"
 
-          # Write only the tag portion (after colon) into newTag
+          echo "🔄 Updating image tags in kustomize overlays..."
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/dev/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/staging/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/prod/kustomization.yaml
@@ -91,8 +90,8 @@ jobs:
             git commit -m "ci: bump image tag to ${IMAGE}"
             git push origin HEAD:main
           else
-            echo "No kustomize changes to commit"
+            echo "✅ No kustomize changes to commit."
           fi
 
       - name: Done
-        run: echo "CI job finished."
+        run: echo "🎉 CI job finished successfully."
