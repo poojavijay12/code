@@ -12,7 +12,6 @@ permissions:
   actions: read
 
 env:
-  # default image name (can be overridden via secret IMAGE_NAME)
   IMAGE_NAME: myapp-backend
   REGISTRY: docker.io
 
@@ -55,7 +54,6 @@ jobs:
           echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
-          # Choose IMAGE_NAME from secret if provided, otherwise use env default
           if [ -n "${{ secrets.IMAGE_NAME }}" ]; then
             IMAGE_NAME="${{ secrets.IMAGE_NAME }}"
           else
@@ -63,7 +61,6 @@ jobs:
           fi
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
 
-          # Compose full image paths using the Docker Hub username secret
           if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
             echo "ERROR: secrets.DOCKERHUB_USERNAME is not set"
             exit 1
@@ -105,12 +102,8 @@ jobs:
             echo "ERROR: $DEPLOYMENT_FILE not found. Adjust the path in the workflow."
             exit 1
           fi
-
           cp "$DEPLOYMENT_FILE" "${DEPLOYMENT_FILE}.bak"
-
-          # Replace first image: line with the new image
           sed -E -i "0,/image:[[:space:]]*.*/s|image:[[:space:]]*.*|image: ${IMAGE_FULL}|" "$DEPLOYMENT_FILE"
-
           echo "Updated image in $DEPLOYMENT_FILE to ${IMAGE_FULL}"
           git --no-pager diff -- "$DEPLOYMENT_FILE" || true
 
@@ -122,8 +115,43 @@ jobs:
         run: |
           git config user.name "${GIT_AUTHOR_NAME}"
           git config user.email "${GIT_AUTHOR_EMAIL}"
-
           git add k8s/base/deployment.yaml || true
-
-          # Only commit if there are changes
           if git diff --cached --quiet; then
+            echo "No manifest changes to commit."
+          else
+            git commit -m "ci: update k8s image to ${IMAGE_FULL} [skip ci]" || echo "commit failed"
+            TARGET_BRANCH="${GITHUB_REF#refs/heads/}"
+            git push origin HEAD:${TARGET_BRANCH} || {
+              echo "Push failed — branch may be protected or permissions insufficient."
+            }
+            echo "Committed and attempted to push manifest update."
+          fi
+
+      - name: (Optional) Trigger Argo CD sync via API (if provided)
+        if: ${{ secrets.ARGOCD_SERVER && secrets.ARGOCD_USERNAME && secrets.ARGOCD_PASSWORD }}
+        env:
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          ARGOCD_USERNAME: ${{ secrets.ARGOCD_USERNAME }}
+          ARGOCD_PASSWORD: ${{ secrets.ARGOCD_PASSWORD }}
+          APP_NAME: myapp-backend
+        run: |
+          apt-get update && apt-get install -y jq curl >/dev/null
+          ARGO_TOKEN=$(curl -s -k -X POST "https://${ARGOCD_SERVER}/api/v1/session" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${ARGOCD_USERNAME}\",\"password\":\"${ARGOCD_PASSWORD}\"}" \
+            | jq -r .token)
+          if [ -z "$ARGO_TOKEN" ] || [ "$ARGO_TOKEN" == "null" ]; then
+            echo "Failed to obtain Argo CD token — check ARGOCD_SERVER and credentials"
+            exit 1
+          fi
+          SYNC_OUT=$(curl -s -k -X POST "https://${ARGOCD_SERVER}/api/v1/applications/${APP_NAME}/sync" \
+            -H "Authorization: Bearer ${ARGO_TOKEN}" -H "Content-Type: application/json" \
+            -d '{"revision":"main","prune":true,"strategy":{ "hook":{}} }')
+          echo "Argo CD sync response: $SYNC_OUT"
+
+      - name: Clean up backups
+        run: |
+          rm -f k8s/base/deployment.yaml.bak || true
+
+      - name: Done
+        run: echo "CI/CD job finished. Image: ${IMAGE_FULL}"
