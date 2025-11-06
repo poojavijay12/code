@@ -1,0 +1,48 @@
+name: Debug Docker Login (explicit)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  debug-login:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show context
+        run: |
+          echo "REPO=${GITHUB_REPOSITORY}"
+          echo "REF=${GITHUB_REF}"
+          echo "ACTOR=${GITHUB_ACTOR}"
+
+      - name: Show secrets presence (masked)
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "DH_USER present? -> ${DH_USER:+YES}${DH_USER:-NO}"
+          echo "DH_TOKEN present? -> ${DH_TOKEN:+YES}${DH_TOKEN:-NO}"
+          echo "Lengths: user=${#DH_USER}, token=${#DH_TOKEN}"
+          if [ -z "${DH_USER:-}" ] || [ -z "${DH_TOKEN:-}" ]; then
+            echo "ERROR: secrets missing or empty; exit."
+            exit 2
+          fi
+
+      - name: Try docker CLI login (explicit)
+        shell: bash
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "Attempting docker login with CLI..."
+          set -o pipefail
+          echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin 2>&1 | sed -n '1,200p' || echo "docker login returned non-zero exit code"
+
+      - name: Docker version (sanity)
+        run: docker --version || true
+
+      - name: Done
+        run: echo "debug finished"
