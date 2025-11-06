@@ -11,34 +11,21 @@ permissions:
 env:
   IMAGE_NAME: myapp
   REGISTRY: docker.io
-  DOCKERHUB_USERNAME: poojavijayakumar   # using your username directly
+  DOCKERHUB_USERNAME: poojavijayakumar
+  DOCKERHUB_TOKEN: dckr_pat_DgAU8_kzUS-Vw8Xmezfi5X2egy0
+
 
 jobs:
   build-and-update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true  # allow pushing back with the runner's token
 
-      - name: Quick secret sanity check
-        env:
-          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          echo "Checking DockerHub token presence..."
-          if [ -z "${DH_TOKEN:-}" ]; then
-            echo "❌ ERROR: DOCKERHUB_TOKEN secret is missing or empty."
-            echo "➡️  Go to: GitHub → Repo → Settings → Secrets and variables → Actions → New secret"
-            echo "   Name: DOCKERHUB_TOKEN"
-            echo "   Value: <your DockerHub access token>"
-            exit 2
-          fi
-          echo "✅ DockerHub token detected. Proceeding..."
-
-      - name: Set up QEMU (for buildx)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
       - name: Set up Docker Buildx
@@ -47,7 +34,7 @@ jobs:
       - name: Login to DockerHub
         uses: docker/login-action@v2
         with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push image
@@ -57,7 +44,8 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # ensure a valid image reference with username and registry
+          tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Install yq
         run: |
@@ -68,30 +56,27 @@ jobs:
 
       - name: Update kustomize image tags in overlays
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           GIT_EMAIL: "github-actions[bot]@users.noreply.github.com"
           GIT_NAME: "github-actions[bot]"
+          # ensure git push uses the GITHUB_TOKEN provided in the runner
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
           git config user.email "$GIT_EMAIL"
           git config user.name "$GIT_NAME"
 
-          echo "🔄 Updating image tags in kustomize overlays..."
+          # Replace newTag in each overlay's kustomization.yaml with only the tag portion
+          # ${IMAGE#*:} extracts the part after the colon (the tag)
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/dev/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/staging/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/prod/kustomization.yaml
 
-          git add k8s/overlays/dev/kustomization.yaml \
-                  k8s/overlays/staging/kustomization.yaml \
-                  k8s/overlays/prod/kustomization.yaml
-
+          git add k8s/overlays/dev/kustomization.yaml k8s/overlays/staging/kustomization.yaml k8s/overlays/prod/kustomization.yaml
+          # Only commit if there are changes
           if ! git diff --cached --quiet; then
             git commit -m "ci: bump image tag to ${IMAGE}"
+            # Use the automatic GITHUB_TOKEN credential that checkout action set up
             git push origin HEAD:main
           else
-            echo "✅ No kustomize changes to commit."
+            echo "No kustomize changes to commit"
           fi
-
-      - name: Done
-        run: echo "🎉 CI job finished successfully."
