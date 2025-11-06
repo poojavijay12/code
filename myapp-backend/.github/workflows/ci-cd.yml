@@ -51,16 +51,15 @@ jobs:
         run: |
           SHORT_SHA=${GITHUB_SHA::8}
           IMAGE_TAG="sha-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
-          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
+          # IMAGE_NAME: prefer secret if provided, otherwise use env default
           if [ -n "${{ secrets.IMAGE_NAME }}" ]; then
             IMAGE_NAME="${{ secrets.IMAGE_NAME }}"
           else
             IMAGE_NAME="${IMAGE_NAME}"
           fi
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
 
+          # Ensure Docker Hub username secret exists
           if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
             echo "ERROR: secrets.DOCKERHUB_USERNAME is not set"
             exit 1
@@ -69,10 +68,17 @@ jobs:
           IMAGE_FULL="${REGISTRY}/${{ secrets.DOCKERHUB_USERNAME }}/${IMAGE_NAME}:${IMAGE_TAG}"
           IMAGE_LATEST="${REGISTRY}/${{ secrets.DOCKERHUB_USERNAME }}/${IMAGE_NAME}:latest"
 
-          echo "IMAGE_FULL=$IMAGE_FULL" >> $GITHUB_ENV
-          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
+          # Export to subsequent steps via GITHUB_ENV
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+          echo "IMAGE_FULL=${IMAGE_FULL}" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=${IMAGE_LATEST}" >> $GITHUB_ENV
 
-          echo "Computed IMAGE_FULL=$IMAGE_FULL"
+          # Also expose as step outputs so we can reference them in 'with' inputs
+          echo "image_full=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+          echo "image_latest=${IMAGE_LATEST}" >> $GITHUB_OUTPUT
+
+          echo "Computed IMAGE_FULL=${IMAGE_FULL}"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -88,8 +94,8 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_FULL }}
-            ${{ env.IMAGE_LATEST }}
+            ${{ steps.set-vars.outputs.image_full }}
+            ${{ steps.set-vars.outputs.image_latest }}
 
       - name: Verify pushed image (info only)
         run: |
@@ -128,25 +134,39 @@ jobs:
           fi
 
       - name: (Optional) Trigger Argo CD sync via API (if provided)
-        if: ${{ secrets.ARGOCD_SERVER && secrets.ARGOCD_USERNAME && secrets.ARGOCD_PASSWORD }}
-        env:
-          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
-          ARGOCD_USERNAME: ${{ secrets.ARGOCD_USERNAME }}
-          ARGOCD_PASSWORD: ${{ secrets.ARGOCD_PASSWORD }}
-          APP_NAME: myapp-backend
+        # Note: we intentionally avoid using secrets in a step-level `if:` expression,
+        # because that can lead to "Unrecognized named-value: 'secrets'" errors.
         run: |
-          apt-get update && apt-get install -y jq curl >/dev/null
+          # If ARGOCD secrets are not configured, skip the sync.
+          if [ -z "${{ secrets.ARGOCD_SERVER }}" ] || [ -z "${{ secrets.ARGOCD_USERNAME }}" ] || [ -z "${{ secrets.ARGOCD_PASSWORD }}" ]; then
+            echo "ARGOCD secrets not set, skipping Argo CD sync."
+            exit 0
+          fi
+
+          apt-get update -y
+          apt-get install -y jq curl >/dev/null
+
+          ARGOCD_SERVER="${{ secrets.ARGOCD_SERVER }}"
+          ARGOCD_USERNAME="${{ secrets.ARGOCD_USERNAME }}"
+          ARGOCD_PASSWORD="${{ secrets.ARGOCD_PASSWORD }}"
+          APP_NAME="myapp-backend"
+
+          echo "Attempting to obtain Argo CD token from ${ARGOCD_SERVER} ..."
           ARGO_TOKEN=$(curl -s -k -X POST "https://${ARGOCD_SERVER}/api/v1/session" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"${ARGOCD_USERNAME}\",\"password\":\"${ARGOCD_PASSWORD}\"}" \
             | jq -r .token)
-          if [ -z "$ARGO_TOKEN" ] || [ "$ARGO_TOKEN" == "null" ]; then
+
+          if [ -z "$ARGO_TOKEN" ] || [ "$ARGO_TOKEN" = "null" ]; then
             echo "Failed to obtain Argo CD token — check ARGOCD_SERVER and credentials"
             exit 1
           fi
+
+          echo "Triggering Argo CD sync for application ${APP_NAME} ..."
           SYNC_OUT=$(curl -s -k -X POST "https://${ARGOCD_SERVER}/api/v1/applications/${APP_NAME}/sync" \
             -H "Authorization: Bearer ${ARGO_TOKEN}" -H "Content-Type: application/json" \
-            -d '{"revision":"main","prune":true,"strategy":{ "hook":{}} }')
+            -d '{"revision":"main","prune":true,"strategy":{"hook":{}} }')
+
           echo "Argo CD sync response: $SYNC_OUT"
 
       - name: Clean up backups
@@ -154,4 +174,5 @@ jobs:
           rm -f k8s/base/deployment.yaml.bak || true
 
       - name: Done
-        run: echo "CI/CD job finished. Image: ${IMAGE_FULL}"
+        run: |
+          echo "CI/CD job finished. Image: ${IMAGE_FULL}"
