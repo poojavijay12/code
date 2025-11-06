@@ -1,8 +1,10 @@
 name: CI Build & Update Manifests
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
+
 
 permissions:
   contents: write
