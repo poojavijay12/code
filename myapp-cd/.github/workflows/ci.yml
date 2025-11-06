@@ -31,14 +31,17 @@ jobs:
 
       - name: Show Dockerfile path (debug)
         run: |
-          if [ -f ./Dockerfile ]; then
+          # Check for exact filename "Dockerfile" at repo root (case-sensitive)
+          if [ -f Dockerfile ]; then
             echo "Dockerfile found at repo root"
           else
             echo "::error ::Dockerfile NOT found at repo root. Looking for common alternatives..."
+            echo "Contents of app/:"
             ls -la app || true
-            ls -la ./backend || true
-            ls -la ./docker || true
-            # fail early so you don't waste minutes on build
+            echo "Contents of backend/:"
+            ls -la backend || true
+            echo "Contents of docker/:"
+            ls -la docker || true
             exit 1
           fi
 
@@ -71,7 +74,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
-          file: ./Dockerfile
+          file: Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
