@@ -10,6 +10,7 @@ permissions:
 
 env:
   IMAGE_NAME: myapp   # change only if your image repo name differs
+  REGISTRY: docker.io
 
 jobs:
   build-and-update:
@@ -21,6 +22,22 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true  # allow pushing back with the runner's token
+
+      - name: Quick secrets sanity check
+        # this checks secrets are available to the runner; fails early if not
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "Checking required secrets..."
+          if [ -z "${DH_USER:-}" ] || [ -z "${DH_TOKEN:-}" ]; then
+            echo "ERROR: Required secrets DOCKERHUB_USERNAME and/or DOCKERHUB_TOKEN are missing or empty."
+            echo "Please add them at: Settings -> Secrets and variables -> Actions"
+            exit 2
+          fi
+          echo "DOCKERHUB_USERNAME length: ${#DH_USER}"
+          echo "DOCKERHUB_TOKEN length: ${#DH_TOKEN}"
+          echo "Secrets appear present. Proceeding..."
 
       - name: Set up QEMU (for buildx)
         uses: docker/setup-qemu-action@v2
@@ -41,7 +58,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Install yq
         run: |
@@ -52,7 +69,7 @@ jobs:
 
       - name: Update kustomize image tags in overlays
         env:
-          IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          IMAGE: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           GIT_EMAIL: "github-actions[bot]@users.noreply.github.com"
           GIT_NAME: "github-actions[bot]"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,7 +78,7 @@ jobs:
           git config user.email "$GIT_EMAIL"
           git config user.name "$GIT_NAME"
 
-          # Update overlays' newTag with the tag part (everything after colon)
+          # Write only the tag portion (after colon) into newTag
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/dev/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/staging/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/prod/kustomization.yaml
@@ -72,7 +89,6 @@ jobs:
 
           if ! git diff --cached --quiet; then
             git commit -m "ci: bump image tag to ${IMAGE}"
-            # push using the automatically provided token credential
             git push origin HEAD:main
           else
             echo "No kustomize changes to commit"
