@@ -64,29 +64,52 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image (docker CLI, from myapp-cd)
+      - name: Build and push image (docker CLI - robust)
         working-directory: ${{ github.workspace }}
         env:
           IMAGE_FULL: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
           set -euo pipefail
           echo "PWD before build: $(pwd)"
-          echo "Listing repo root:"
-          ls -la
           echo "Listing myapp-cd folder:"
           ls -la myapp-cd || true
-          echo "Building image from myapp-cd: $IMAGE_FULL"
-          # build using the Dockerfile that lives under myapp-cd/
+
+          echo "Building image (explicit context myapp-cd): $IMAGE_FULL"
           docker build -f myapp-cd/Dockerfile -t "$IMAGE_FULL" myapp-cd 2>&1 | sed -n '1,400p' || true
-          echo "---- docker images filter ----"
-          docker images --format '{{.Repository}}:{{.Tag}}' | sed -n '1,200p' || true
-          if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "$IMAGE_FULL"; then
-            echo "Pushing $IMAGE_FULL"
-            docker push "$IMAGE_FULL" 2>&1 | sed -n '1,200p' || true
-            echo "PUSH done"
+
+          echo
+          echo "=== verify image using docker image inspect ==="
+          if docker image inspect "$IMAGE_FULL" >/dev/null 2>&1; then
+            echo "Image found as exact name: $IMAGE_FULL"
+            PUSH_TARGET="$IMAGE_FULL"
           else
-            echo "::error ::Image $IMAGE_FULL not found after build"
-            exit 1
+            # Fallback to short name (strip leading docker.io/ if present)
+            SHORT="${IMAGE_FULL#docker.io/}"
+            echo "Exact name not found; trying short name: $SHORT"
+            if docker image inspect "$SHORT" >/dev/null 2>&1; then
+              echo "Image found as short name: $SHORT"
+              PUSH_TARGET="$SHORT"
+            else
+              echo "Image not found by either name (exact or short). Showing docker images output:"
+              docker images --format 'REPO:TAG={{.Repository}}:{{.Tag}}  ID={{.ID}}' | sed -n '1,200p' || true
+              echo "::error ::Image was not found after build"
+              exit 1
+            fi
+          fi
+
+          echo "Pushing image using target: $PUSH_TARGET"
+          # Try push using chosen push target; if it fails, also try the alternate
+          if docker push "$PUSH_TARGET" 2>&1 | sed -n '1,200p'; then
+            echo "Push succeeded for $PUSH_TARGET"
+          else
+            echo "Push failed for $PUSH_TARGET, trying alternate form"
+            ALT="${PUSH_TARGET#docker.io/}"
+            if docker push "$ALT" 2>&1 | sed -n '1,200p'; then
+              echo "Push succeeded for alternate $ALT"
+            else
+              echo "::error ::Push failed for both $PUSH_TARGET and $ALT"
+              exit 1
+            fi
           fi
 
       - name: Install yq
