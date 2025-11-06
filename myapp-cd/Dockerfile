@@ -4,11 +4,6 @@ FROM python:3.10-slim
 # Set working directory inside the container
 WORKDIR /app
 
-# Copy dependencies first for caching
-COPY requirements.txt .
-
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app
