@@ -64,54 +64,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image (docker CLI - robust)
-        working-directory: ${{ github.workspace }}
-        env:
-          IMAGE_FULL: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-        run: |
-          set -euo pipefail
+      - name: Buildx build and push (recommended)
+        uses: docker/build-push-action@v4
+        with:
+          context: ./myapp-cd
+          file: ./myapp-cd/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # optional: build for multiple platforms; remove if not needed
+          # platforms: linux/amd64,linux/arm64
 
-          echo "PWD before build: $(pwd)"
-          echo "Listing myapp-cd folder:"
-          ls -la myapp-cd || true
-
-          echo "Building image from myapp-cd: $IMAGE_FULL"
-          # Build explicitly from myapp-cd
-          docker build -f myapp-cd/Dockerfile -t "$IMAGE_FULL" myapp-cd 2>&1 | sed -n '1,400p' || true
-
-          echo
-          echo "=== verify image using docker image inspect ==="
-          if docker image inspect "$IMAGE_FULL" >/dev/null 2>&1; then
-            echo "Image found as exact name: $IMAGE_FULL"
-            PUSH_TARGET="$IMAGE_FULL"
-          else
-            SHORT="${IMAGE_FULL#docker.io/}"
-            echo "Exact name not found; trying short name: $SHORT"
-            if docker image inspect "$SHORT" >/dev/null 2>&1; then
-              echo "Image found as short name: $SHORT"
-              PUSH_TARGET="$SHORT"
-            else
-              echo "Image not found by either name (exact or short). Showing docker images output:"
-              docker images --format 'REPO:TAG={{.Repository}}:{{.Tag}}  ID={{.ID}}' | sed -n '1,200p' || true
-              echo "::error ::Image was not found after build"
-              exit 1
-            fi
-          fi
-
-          echo "Pushing image using target: $PUSH_TARGET"
-          # Try push using chosen push target; if it fails, also try the alternate
-          if docker push "$PUSH_TARGET" 2>&1 | sed -n '1,200p'; then
-            echo "Push succeeded for $PUSH_TARGET"
-          else
-            ALT="${PUSH_TARGET#docker.io/}"
-            echo "Push failed for $PUSH_TARGET, trying alternate form: $ALT"
-            if docker push "$ALT" 2>&1 | sed -n '1,200p'; then
-              echo "Push succeeded for alternate $ALT"
-            else
-              echo "::error ::Push failed for both $PUSH_TARGET and $ALT"
-              exit 1
-            fi
-          fi
 
       - name: Install yq
         run: |
