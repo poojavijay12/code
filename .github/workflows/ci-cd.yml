@@ -154,6 +154,4 @@ jobs:
           rm -f k8s/base/deployment.yaml.bak || true
 
       - name: Done
-        run: echo "CI/CD job finished. Image: ${IMAGE_FULL}"  
-YML
-        
+        run: echo "CI/CD job finished. Image: ${IMAGE_FULL}"
