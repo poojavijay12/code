@@ -17,7 +17,7 @@ template:
   spec:
     containers:
       - name: backend
-        image: REPLACE_WITH_IMAGE:TAG
+        image: docker.io/poojavijayakumar/myapp-backend:sha-b84ca996-14
         ports:
           - containerPort: 8080
         livenessProbe:
