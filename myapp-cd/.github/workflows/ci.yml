@@ -1,4 +1,4 @@
-name: CI Build & Update Manifests
+name: CI Build & Update Manifests (build from myapp-cd)
 
 on:
   push:
@@ -17,18 +17,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (full)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Show repo root (debug)
+      - name: Show workspace & root listing (debug)
         run: |
-          echo "Working directory: $(pwd)"
           echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
-          echo "Listing repo root files:"
+          echo "PWD: $(pwd)"
+          echo "---- top-level files ----"
           ls -la
+          echo "---- show .github/workflows ----"
+          ls -la .github/workflows || true
+          echo "---- show myapp-cd (project) ----"
+          ls -la myapp-cd || echo "myapp-cd not present"
+
+      - name: Show Dockerfile inside myapp-cd (debug)
+        run: |
+          if [ -f myapp-cd/Dockerfile ]; then
+            echo "Dockerfile present at myapp-cd/Dockerfile"
+            stat myapp-cd/Dockerfile || true
+            echo "---- Dockerfile content (first 200 lines) ----"
+            sed -n '1,200p' myapp-cd/Dockerfile || true
+          else
+            echo "::error ::myapp-cd/Dockerfile NOT found"
+            exit 1
+          fi
 
       - name: Quick secret sanity check
         env:
@@ -36,41 +52,42 @@ jobs:
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           if [ -z "${DH_USER:-}" ] || [ -z "${DH_TOKEN:-}" ]; then
-            echo "::error ::DOCKERHUB_USERNAME and/or DOCKERHUB_TOKEN are missing. Add them at Settings → Secrets and variables → Actions"
+            echo "::error ::DOCKERHUB_USERNAME and/or DOCKERHUB_TOKEN missing"
             exit 2
           fi
           echo "DockerHub username present (length): ${#DH_USER}"
           echo "DockerHub token present (length): ${#DH_TOKEN}"
 
-      - name: Login to DockerHub
+      - name: Docker login (use token)
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image (docker CLI)
+      - name: Build and push image (docker CLI, from myapp-cd)
         working-directory: ${{ github.workspace }}
         env:
           IMAGE_FULL: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
           set -euo pipefail
           echo "PWD before build: $(pwd)"
-          echo "Listing current dir:"
+          echo "Listing repo root:"
           ls -la
-          echo "Listing myapp-cd dir:"
+          echo "Listing myapp-cd folder:"
           ls -la myapp-cd || true
           echo "Building image from myapp-cd: $IMAGE_FULL"
           # build using the Dockerfile that lives under myapp-cd/
-          docker build -f myapp-cd/Dockerfile -t "$IMAGE_FULL" myapp-cd
-          echo "Images (filter):"
+          docker build -f myapp-cd/Dockerfile -t "$IMAGE_FULL" myapp-cd 2>&1 | sed -n '1,400p' || true
+          echo "---- docker images filter ----"
           docker images --format '{{.Repository}}:{{.Tag}}' | sed -n '1,200p' || true
           if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "$IMAGE_FULL"; then
-            docker push "$IMAGE_FULL"
+            echo "Pushing $IMAGE_FULL"
+            docker push "$IMAGE_FULL" 2>&1 | sed -n '1,200p' || true
+            echo "PUSH done"
           else
             echo "::error ::Image $IMAGE_FULL not found after build"
             exit 1
           fi
-
 
       - name: Install yq
         run: |
@@ -88,15 +105,12 @@ jobs:
           set -euo pipefail
           git config user.email "$GIT_EMAIL"
           git config user.name "$GIT_NAME"
-
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/dev/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/staging/kustomization.yaml
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/prod/kustomization.yaml
-
           git add k8s/overlays/dev/kustomization.yaml \
                   k8s/overlays/staging/kustomization.yaml \
                   k8s/overlays/prod/kustomization.yaml
-
           if ! git diff --cached --quiet; then
             git commit -m "ci: bump image tag to ${IMAGE}"
             git push origin HEAD:main
