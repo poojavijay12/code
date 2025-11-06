@@ -10,6 +10,10 @@ permissions:
 
 env:
   IMAGE_NAME: myapp
+  REGISTRY: docker.io
+  DOCKERHUB_USERNAME: poojavijayakumar
+  DOCKERHUB_TOKEN: dckr_pat_DgAU8_kzUS-Vw8Xmezfi5X2egy0
+
 
 jobs:
   build-and-update:
