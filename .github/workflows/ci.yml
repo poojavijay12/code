@@ -1,0 +1,68 @@
+name: CI Build & Update Manifests
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ github.sha }}
+
+      - name: Install yq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          sudo wget -qO /usr/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/bin/yq
+
+      - name: Update kustomize image tags in overlays
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ github.sha }}
+          GIT_EMAIL: "github-actions[bot]@users.noreply.github.com"
+          GIT_NAME: "github-actions[bot]"
+        run: |
+          git config user.email "$GIT_EMAIL"
+          git config user.name "$GIT_NAME"
+
+          # Update dev
+          yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/dev/kustomization.yaml
+          # Update staging
+          yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/staging/kustomization.yaml
+          # Update prod
+          yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/prod/kustomization.yaml
+
+          git add k8s/overlays/dev/kustomization.yaml k8s/overlays/staging/kustomization.yaml k8s/overlays/prod/kustomization.yaml
+          git commit -m "ci: bump image tag to $IMAGE" || echo "no changes to commit"
+          git push origin HEAD:main
