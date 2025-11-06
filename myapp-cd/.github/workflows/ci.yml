@@ -5,21 +5,24 @@ on:
     branches: [ main ]
   workflow_dispatch: {}
 
-
 permissions:
   contents: write
+
+env:
+  IMAGE_NAME: myapp   # change only if your image repo name differs
 
 jobs:
   build-and-update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true  # allow pushing back with the runner's token
 
-      - name: Set up QEMU
+      - name: Set up QEMU (for buildx)
         uses: docker/setup-qemu-action@v2
 
       - name: Set up Docker Buildx
@@ -38,7 +41,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ github.sha }}
+          tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Install yq
         run: |
@@ -49,20 +52,31 @@ jobs:
 
       - name: Update kustomize image tags in overlays
         env:
-          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ github.sha }}
+          IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           GIT_EMAIL: "github-actions[bot]@users.noreply.github.com"
           GIT_NAME: "github-actions[bot]"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           git config user.email "$GIT_EMAIL"
           git config user.name "$GIT_NAME"
 
-          # Update dev
+          # Update overlays' newTag with the tag part (everything after colon)
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/dev/kustomization.yaml
-          # Update staging
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/staging/kustomization.yaml
-          # Update prod
           yq eval -i ".images[0].newTag = \"${IMAGE#*:}\"" k8s/overlays/prod/kustomization.yaml
 
-          git add k8s/overlays/dev/kustomization.yaml k8s/overlays/staging/kustomization.yaml k8s/overlays/prod/kustomization.yaml
-          git commit -m "ci: bump image tag to $IMAGE" || echo "no changes to commit"
-          git push origin HEAD:main
+          git add k8s/overlays/dev/kustomization.yaml \
+                  k8s/overlays/staging/kustomization.yaml \
+                  k8s/overlays/prod/kustomization.yaml
+
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: bump image tag to ${IMAGE}"
+            # push using the automatically provided token credential
+            git push origin HEAD:main
+          else
+            echo "No kustomize changes to commit"
+          fi
+
+      - name: Done
+        run: echo "CI job finished."
