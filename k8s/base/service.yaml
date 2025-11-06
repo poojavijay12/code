@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata: null
+name: myapp-backend-svc
+spec: null
+selector: null
+app: myapp-backend
+ports:
+  - port: 80
+targetPort: 8080
+type: ClusterIP

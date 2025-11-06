@@ -1,0 +1,11 @@
+resources:
+  - ../../base/deployment.yaml
+  - ../../base/service.yaml
+patches:
+  - target: null
+kind: Deployment
+name: myapp-backend
+patch: |
+  - op: replace
+path: /spec/template/spec/containers/0/image
+value: REPLACE_WITH_IMAGE:TAG

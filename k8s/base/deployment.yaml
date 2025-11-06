@@ -1,0 +1,28 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: null
+name: myapp-backend
+labels: null
+app: myapp-backend
+spec: null
+replicas: 2
+selector:
+  matchLabels:
+    app: myapp-backend
+template:
+  metadata:
+    labels:
+      app: myapp-backend
+  spec:
+    containers:
+      - name: backend
+        image: REPLACE_WITH_IMAGE:TAG
+        ports:
+          - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
