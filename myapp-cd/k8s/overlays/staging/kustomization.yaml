@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: myapp-staging
+
+patchesStrategicMerge:
+  - patch-deployment.yaml
+
+images:
+  - name: YOUR_REGISTRY/your-username/myapp
+    newTag: "staging-latest"

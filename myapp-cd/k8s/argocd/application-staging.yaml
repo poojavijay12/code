@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/your-username/myapp-cd.git'
+    path: 'k8s/overlays/staging'
+    targetRevision: main
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: myapp-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
